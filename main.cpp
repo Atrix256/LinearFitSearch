@@ -3,6 +3,7 @@
 #include <random>
 #include <thread>
 #include <atomic>
+#include <string>
 
 static const size_t c_maxValue = 2000;      // the sorted arrays will have values between 0 and this number in them (inclusive)
 static const size_t c_maxNumValues = 1000;  // the graphs will graph between 1 and this many values in a sorted array
@@ -451,6 +452,9 @@ int main(int argc, char** argv)
     std::vector<std::thread> threads;
     threads.resize(numThreads);
 
+    typedef std::vector<std::string> TRow;
+    typedef std::vector<TRow> TSheet;
+
     // for each numer sequence. Done multithreadedly
     std::atomic<size_t> nextRow(0);
     for (std::thread& t : threads)
@@ -467,25 +471,31 @@ int main(int argc, char** argv)
                     static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
                     static std::mt19937 rng(fullSeed);
 
-                    char fileName[256];
-                    sprintf_s(fileName, "out/%s.csv", MakeFns[makeIndex].name);
-                    FILE* file = nullptr;
-                    fopen_s(&file, fileName, "w+b");
+                    // the data to write to the csv file. a row per sample count plus one more for titles
+                    TSheet csv;
+                    csv.resize(c_maxNumValues + 1);
 
-                    // make a row for the sample counts
-                    fprintf(file, "\"Sample Count\"");
+                    // make a column for the sample counts
+                    char buffer[256];
+                    csv[0].push_back("Sample Count");
                     for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
-                        fprintf(file, ",\"%zu\"", numValues);
-                    fprintf(file, "\n");
+                    {
+                        sprintf_s(buffer, "%zu", numValues);
+                        csv[numValues].push_back(buffer);
+                    }
 
                     // for each test
                     std::vector<size_t> values;
                     for (size_t testIndex = 0; testIndex < countof(TestFns); ++testIndex)
                     {
-                        std::vector<size_t> guessesMin(c_maxNumValues, ~size_t(0));
-                        std::vector<size_t> guessesMax(c_maxNumValues, 0);
-                        std::vector<float> guessesAvg(c_maxNumValues, 0.0f);
-                        std::vector<size_t> guessesSingle(c_maxNumValues, 0);
+                        sprintf_s(buffer, "%s Min", TestFns[testIndex].name);
+                        csv[0].push_back(buffer);
+                        sprintf_s(buffer, "%s Max", TestFns[testIndex].name);
+                        csv[0].push_back(buffer);
+                        sprintf_s(buffer, "%s Avg", TestFns[testIndex].name);
+                        csv[0].push_back(buffer);
+                        sprintf_s(buffer, "%s Single", TestFns[testIndex].name);
+                        csv[0].push_back(buffer);
 
                         // for each result
                         for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
@@ -512,32 +522,39 @@ int main(int argc, char** argv)
                                 guessSingle = result.guesses;
                             }
 
-                            guessesMin[numValues - 1] = guessMin;
-                            guessesMax[numValues - 1] = guessMax;
-                            guessesAvg[numValues - 1] = guessAverage;
-                            guessesSingle[numValues - 1] = guessSingle;
-                        }
+                            sprintf_s(buffer, "%zu", guessMin);
+                            csv[numValues].push_back(buffer);
 
-                        fprintf(file, "\n\"%s Min\"", TestFns[testIndex].name);
-                        for (size_t v : guessesMin)
-                            fprintf(file, ",\"%zu\"", v);
-                        fprintf(file, "\n\"%s Max\"", TestFns[testIndex].name);
-                        for (size_t v : guessesMax)
-                            fprintf(file, ",\"%zu\"", v);
-                        fprintf(file, "\n\"%s Avg\"", TestFns[testIndex].name);
-                        for (float v : guessesAvg)
-                            fprintf(file, ",\"%f\"", v);
-                        fprintf(file, "\n\"%s Single\"", TestFns[testIndex].name);
-                        for (size_t v : guessesSingle)
-                            fprintf(file, ",\"%zu\"", v);
-                        fprintf(file, "\n");
+                            sprintf_s(buffer, "%zu", guessMax);
+                            csv[numValues].push_back(buffer);
+
+                            sprintf_s(buffer, "%f", guessAverage);
+                            csv[numValues].push_back(buffer);
+
+                            sprintf_s(buffer, "%zu", guessSingle);
+                            csv[numValues].push_back(buffer);
+                        }
                     }
 
-                    // make a row for the sampling sequence itself
-                    fprintf(file, "\n\"Sequence\"");
-                    for (size_t v : values)
-                        fprintf(file, ",\"%zu\"", v);
-                    fprintf(file, "\n");
+                    // make a column for the sampling sequence itself
+                    csv[0].push_back("Sequence");
+                    for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
+                    {
+                        sprintf_s(buffer, "%zu", values[numValues-1]);
+                        csv[numValues].push_back(buffer);
+                    }
+
+                    char fileName[256];
+                    sprintf_s(fileName, "out/%s.csv", MakeFns[makeIndex].name);
+                    FILE* file = nullptr;
+                    fopen_s(&file, fileName, "w+b");
+
+                    for (const TRow& row : csv)
+                    {
+                        for (const std::string& cell : row)
+                            fprintf(file, "\"%s\",", cell.c_str());
+                        fprintf(file, "\n");
+                    }
 
                     fclose(file);
 
@@ -558,7 +575,9 @@ int main(int argc, char** argv)
 
 /*
 
-? should i transpose csv to make it easier to graph data?
+! perf tests may be important.  Maybe do them, but say with a caveat that none of the implementations are optimized. They are meant to be readable.
+
+! linear outlier is the counter case for the line fit search. show that last before showing hybrid!
 
  Analysis:
 * Cubic: line fit does better often, but has large spikes, which is no good.
