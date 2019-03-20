@@ -4,12 +4,15 @@
 #include <thread>
 #include <atomic>
 #include <string>
+#include <chrono>
 
-static const size_t c_maxValue = 2000;      // the sorted arrays will have values between 0 and this number in them (inclusive)
-static const size_t c_maxNumValues = 1000;  // the graphs will graph between 1 and this many values in a sorted array
-static const size_t c_numRunsPerTest = 100; // how many times does it do the same test to gather min, max, average?
+static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
+static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
+static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
+static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
 
 #define VERIFY_RESULT() 1 // verifies that the search functions got the right answer. prints out a message if they didn't.
+#define MAKE_CSVS() 1 // the main test
 
 struct TestResults
 {
@@ -34,20 +37,6 @@ struct TestListInfo
 };
 
 #define countof(array) (sizeof(array) / sizeof(array[0]))
-
-size_t GetRandomIndex(const std::vector<size_t>& values)
-{
-    static std::random_device rd("dev/random");
-    static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
-    static std::mt19937 rng(fullSeed);
-    std::uniform_int_distribution<size_t> dist(0, values.size() - 1);
-    return dist(rng);
-}
-
-size_t GetRandomValue(const std::vector<size_t>& values)
-{
-    return values[GetRandomIndex(values)];
-}
 
 template <typename T>
 T Clamp(T min, T max, T value)
@@ -448,6 +437,8 @@ int main(int argc, char** argv)
         {"Hybrid", TestList_HybridSearch},
     };
 
+#if MAKE_CSVS()
+
     size_t numThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
     threads.resize(numThreads);
@@ -569,13 +560,73 @@ int main(int argc, char** argv)
     for (std::thread& t : threads)
         t.join();
 
+#endif // MAKE_CSVS()
+
+    // Do perf tests
+    {
+        static std::random_device rd("dev/random");
+        static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+        static std::mt19937 rng(fullSeed);
+
+        std::vector<size_t> values, searchValues;
+        searchValues.resize(c_perfTestNumSearches);
+        values.resize(c_maxNumValues);
+
+        // make the search values that are going to be used by all the tests
+        {
+            std::uniform_int_distribution<size_t> dist(0, c_maxValue);
+            for (size_t & v : searchValues)
+                v = dist(rng);
+        }
+
+        // binary search, linear search, etc
+        for (size_t testIndex = 0; testIndex < countof(TestFns); ++testIndex)
+        {
+            // quadratic numbers, random numbers, etc
+            double timeTotal = 0.0f;
+            size_t totalGuesses = 0;
+            for (size_t makeIndex = 0; makeIndex < countof(MakeFns); ++makeIndex)
+            {
+                MakeFns[makeIndex].fn(values, c_maxNumValues);
+
+                size_t guesses = 0;
+
+                std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
+                // do the searches
+                for (size_t searchValue : searchValues)
+                {
+                    TestResults ret = TestFns[testIndex].fn(values, searchValue);
+                    guesses += ret.guesses;
+                    totalGuesses += ret.guesses;
+                }
+
+                std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+
+                std::chrono::duration<double> duration = std::chrono::duration_cast<std::chrono::duration<double>>(end - start);
+
+                timeTotal += duration.count();
+                printf("  %s %s : %f seconds\n", TestFns[testIndex].name, MakeFns[makeIndex].name, duration.count());
+            }
+
+            double timePerGuess = (timeTotal * 1000.0 * 1000.0 * 1000.0f) / double(totalGuesses);
+            printf("%s total : %f seconds  (%zu guesses = %f nanoseconds per guess)\n\n", TestFns[testIndex].name, timeTotal, totalGuesses, timePerGuess);
+        }
+    }
+
+    system("pause");
+
     return 0;
 }
 
 
 /*
 
-! perf tests may be important.  Maybe do them, but say with a caveat that none of the implementations are optimized. They are meant to be readable.
+* yes, perf is different.  On my machine it's 5 nanoseconds per guess for binary search, and about 12 nanoseconds per guess for both the hybrid and line fit.
+ * That means it's about 2.5x slower to do a linear fit or hybrid search per guess.
+ * The binary search would have to do 2.5x as many guesses to make this break even.  As you can see from the graphs, that isn't the case.
+ * Those timings might change if code was optimized.  The code was written to be understandable, not for speed.
+ * Different setups definitely make the "memory read" vs "computation cost" trade off be different.
 
 ! linear outlier is the counter case for the line fit search. show that last before showing hybrid!
 
@@ -592,8 +643,6 @@ Notes:
 * TestList_LineFit() - the first 2 samples could reasonably be done in advance. Knowing min / max in the list isn't unreasonable.  It still beats binary search if you count those, but just by not as much.
 
 * Hybrid: there's likely a sweet spot for when to do a binary step.  Maybe it's a tuneable constant, or maybe you do a binary step if you aren't making enough progress? not sure.
-
-* Not testing perf. the code was written to be understandable, not for speed.
 
 * mention online least squares fitting as a possibility? but it has a matrix inverse...
  * also, the "local fit" seems more appropriate
