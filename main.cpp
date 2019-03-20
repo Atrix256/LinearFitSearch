@@ -622,11 +622,15 @@ int main(int argc, char** argv)
 
 /*
 
+TODO: does this return the location to insert? Ben deane pointed that out as important. it makes it so you can insert it if it doesn't exist without extra work to find out where.
+ * make this part of the verify code.
+
 * yes, perf is different.  On my machine it's 5 nanoseconds per guess for binary search, and about 12 nanoseconds per guess for both the hybrid and line fit.
  * That means it's about 2.5x slower to do a linear fit or hybrid search per guess.
  * The binary search would have to do 2.5x as many guesses to make this break even.  As you can see from the graphs, that isn't the case.
  * Those timings might change if code was optimized.  The code was written to be understandable, not for speed.
  * Different setups definitely make the "memory read" vs "computation cost" trade off be different.
+ * If you find yourself in a situation where you are memory bound, and would be happy to trade a little more computation for less memory reading, this algorithm (and similar ideas) could help.
 
 ! linear outlier is the counter case for the line fit search. show that last before showing hybrid!
 
@@ -661,4 +665,10 @@ Quadratic, cubic and beyond!
  * possibly useful: https://math.stackexchange.com/questions/3129051/how-to-restrict-coefficients-of-polynomial-so-the-function-is-strictly-monotoni
  * and: https://en.wikipedia.org/wiki/Monotone_cubic_interpolation
 
+ Interesting link: cache obvlious b trees
+  * also, note that binary search can be made friendlier for caches due to the fixed sampling locations. This dynamic sampling location setup can't (maybe there is a way if you get creative?)
+  * https://github.com/lodborg/cache-oblivious-btree?fbclid=IwAR0hRKLELEclncWpgyouS8QAFUocQQkmwS1ir59yQLZW-OnFdWivIjUjt5o
+  * A benefit of binary search is it has a fixed number of steps for a list size. Makes it good for branchless code (simd GPU). This one is variable, so doesn't have that property.
+   * Well, binary search CAN work that way but doesn't have to. You can early out if you find the value earlier.
+   * like this: https://blog.demofox.org/2017/06/20/simd-gpu-friendly-branchless-binary-search/
 */
