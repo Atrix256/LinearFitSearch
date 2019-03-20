@@ -560,18 +560,13 @@ int main(int argc, char** argv)
 
 ? should i transpose csv to make it easier to graph data?
 
-* rename repo to be more appropriate for blog post!
- * delete linear least squares repo
- * this repo should be "LinearFitSearch"
-
- Analysis: (TODO: investigate details of all of these to make sure it makes sense)
+ Analysis:
 * Cubic: line fit does better often, but has large spikes, which is no good.
 * Linear Outlier: Line fit does very bad.  The reason why, is there is a huge number at the end, which makes all the guesses be small indices. those are less then so it creeps up to the right value one at a time.
  * Possible way to help this worst case: randomly (or every other iteration) do a binary search step.
 * Linear: line fit does very well compared to binary search.
 * Log: Binary search does much better than line fit. Similar idea to linear outlier. It doesn't make enough progress
 * Random: line fit does well compared to binary search.
-! TODO: should we also graph line fit +2 since we take those 2 samples at the beginning? for people that might think it's unfair not to?
 
 
 Notes:
