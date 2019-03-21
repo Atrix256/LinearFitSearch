@@ -76,7 +76,7 @@ void MakeList_Linear(std::vector<size_t>& values, size_t count)
     values.resize(count);
     for (size_t index = 0; index < count; ++index)
     {
-        float x = float(index) / float(count-1);
+        float x = float(index) / (count > 1 ? float(count - 1) : 1);
         float y = x;
         y *= c_maxValue;
         values[index] = size_t(y);
@@ -96,7 +96,7 @@ void MakeList_Quadratic(std::vector<size_t>& values, size_t count)
     values.resize(count);
     for (size_t index = 0; index < count; ++index)
     {
-        float x = float(index) / float(count - 1);
+        float x = float(index) / (count > 1 ? float(count - 1) : 1);
         float y = x * x;
         y *= c_maxValue;
         values[index] = size_t(y);
@@ -110,7 +110,7 @@ void MakeList_Cubic(std::vector<size_t>& values, size_t count)
     values.resize(count);
     for (size_t index = 0; index < count; ++index)
     {
-        float x = float(index) / float(count-1);
+        float x = float(index) / (count > 1 ? float(count-1) : 1);
         float y = x * x * x;
         y *= c_maxValue;
         values[index] = size_t(y);
@@ -190,8 +190,15 @@ TestResults TestList_LineFit(const std::vector<size_t>& values, size_t searchVal
     ret.guesses = 0;
 
     // if we've already found the value, we are done
-    if (searchValue < min || searchValue > max)
+    if (searchValue < min)
     {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
         ret.found = false;
         return ret;
     }
@@ -244,6 +251,7 @@ TestResults TestList_LineFit(const std::vector<size_t>& values, size_t searchVal
         // if we run out of places to look, we didn't find it
         if (minIndex + 1 >= maxIndex)
         {
+            ret.index = minIndex;
             ret.found = false;
             return ret;
         }
@@ -274,8 +282,15 @@ TestResults TestList_HybridSearch(const std::vector<size_t>& values, size_t sear
     ret.guesses = 0;
 
     // if we've already found the value, we are done
-    if (searchValue < min || searchValue > max)
+    if (searchValue < min)
     {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
         ret.found = false;
         return ret;
     }
@@ -329,6 +344,7 @@ TestResults TestList_HybridSearch(const std::vector<size_t>& values, size_t sear
         // if we run out of places to look, we didn't find it
         if (minIndex + 1 >= maxIndex)
         {
+            ret.index = minIndex;
             ret.found = false;
             return ret;
         }
@@ -376,13 +392,17 @@ TestResults TestList_BinarySearch(const std::vector<size_t>& values, size_t sear
         {
             // underflow prevention
             if (guessIndex == 0)
+            {
+                ret.index = guessIndex;
                 return ret;
+            }
             maxIndex = guessIndex - 1;
         }
 
         // fail case
         if (minIndex > maxIndex)
         {
+            ret.index = guessIndex;
             return ret;
         }
     }
@@ -404,6 +424,7 @@ TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t sear
 void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
 {
     #if VERIFY_RESULT()
+    // verify correctness of result by comparing to a linear search
     TestResults actualResult = TestList_LinearSearch(values, searchValue);
     if (result.found != actualResult.found)
     {
@@ -411,8 +432,25 @@ void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const 
     }
     else if (result.found == true && result.index != actualResult.index && values[result.index] != values[actualResult.index])
     {
+        // Note that in the case of duplicates, different algorithms may return different indices, but the values stored in them should be the same
         printf("VERIFICATION FAILURE!! (index %zu vs %zu) %s, %s\n", result.index, actualResult.index, list, test);
     }
+    // verify that the index returned is a reasonable place for the value to be inserted, if the value was not found.
+    else if (result.found == false)
+    {
+        bool gte = true;
+        bool lte = true;
+
+        if (result.index > 0)
+            gte = searchValue >= values[result.index - 1];
+
+        if (result.index + 1 < values.size())
+            lte = searchValue <= values[result.index + 1];
+
+        if (gte == false || lte == false)
+            printf("VERIFICATION FAILURE!! Not a valid place to insert a new value! %s, %s\n", list, test);
+    }
+
     #endif
 }
 
@@ -621,9 +659,12 @@ int main(int argc, char** argv)
 
 
 /*
+ * Mention that both the line fit search and the hybrid search return the index to insert a value into, when they fail to find the value.
 
-TODO: does this return the location to insert? Ben deane pointed that out as important. it makes it so you can insert it if it doesn't exist without extra work to find out where.
- * make this part of the verify code.
+ * perf isn't well represented because it seems things are going to be in the cache more often when searching the same list over and over.
+  * This would mean that the memory read times are going to be under-reported in perf.
+  * since this is an algorithm that is a trade off between computation and memory bandwidth/reads, that is a big thing.
+  * If you are curious about perf, you should try it in whatever real usage case you have to see if it's a win or not.
 
 * yes, perf is different.  On my machine it's 5 nanoseconds per guess for binary search, and about 12 nanoseconds per guess for both the hybrid and line fit.
  * That means it's about 2.5x slower to do a linear fit or hybrid search per guess.
