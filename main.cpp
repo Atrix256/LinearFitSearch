@@ -131,7 +131,7 @@ void MakeList_Log(std::vector<size_t>& values, size_t count)
     for (size_t index = 0; index < count; ++index)
     {
         float x = float(index + 1);
-        float y = log(x+1) / maxValue;
+        float y = log1p(x) / maxValue;
         y *= c_maxValue;
         values[index] = size_t(y);
     }
