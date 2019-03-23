@@ -6,13 +6,15 @@
 #include <string>
 #include <chrono>
 
-static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
-static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
-static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
-static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
-
 #define VERIFY_RESULT() 1 // verifies that the search functions got the right answer. prints out a message if they didn't.
 #define MAKE_CSVS() 1 // the main test
+
+static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
+static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
+static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
+#if MAKE_CSVS()
+static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
+#endif
 
 struct TestResults
 {
