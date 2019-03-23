@@ -63,7 +63,7 @@ void MakeList_Random(std::vector<size_t>& values, size_t count)
 {
     std::uniform_int_distribution<size_t> dist(0, c_maxValue);
 
-    static std::random_device rd("dev/random");
+    static std::random_device rd;
     static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
     static std::mt19937 rng(fullSeed);
 
@@ -499,7 +499,7 @@ int main(int argc, char** argv)
                 {
                     printf("Starting %s\n", MakeFns[makeIndex].name);
 
-                    static std::random_device rd("dev/random");
+                    static std::random_device rd;
                     static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
                     static std::mt19937 rng(fullSeed);
 
@@ -605,7 +605,7 @@ int main(int argc, char** argv)
 
     // Do perf tests
     {
-        static std::random_device rd("dev/random");
+        static std::random_device rd;
         static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
         static std::mt19937 rng(fullSeed);
 
