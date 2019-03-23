@@ -1,2 +1,7 @@
 .vs/
 x64/
+build/
+graphs/output
+graphs/results.csv
+graphs/samples.csv
+graphs/results.db
