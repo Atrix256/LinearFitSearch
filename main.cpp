@@ -1,4 +1,5 @@
 #include "stdio.h"
+#include <algorithm>
 #include <vector>
 #include <random>
 #include <thread>
