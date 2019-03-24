@@ -1,0 +1,6 @@
+Linear = "title 'Linear' lt rgbcolor '#1b9e77'"
+Random = "title 'Random' lt rgbcolor '#d95f02'"
+Quadratic = "title 'Quadratic' lt rgbcolor '#7570b3'"
+Cubic = "title 'Cubic' lt rgbcolor '#e7298a'"
+Log = "title 'Log' lt rgbcolor '#66a61e'"
+LinearOutlier = "title 'Linear Outlier' lt rgbcolor '#e6ab02'"
