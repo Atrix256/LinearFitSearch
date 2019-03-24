@@ -6,7 +6,7 @@ CREATE TABLE results(
 	  "Samples" INTEGER,
 	  "Minimum" INTEGER,
 	  "Maximum" INTEGER,
-	  "Avgerage" REAL,
+	  "Average" REAL,
 	  "Single" INTEGER
 );
 .import results.csv results
