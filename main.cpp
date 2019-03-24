@@ -424,6 +424,219 @@ TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t sear
     return ret;
 }
 
+struct Point
+{
+    Point(float xin, float yin) : x(xin), y(yin) {}
+    Point(size_t xin, size_t yin) : x(float(xin)), y(float(yin)) {}
+    float x;
+    float y;
+};
+struct LinearEquation
+{
+    float m;
+    float b;
+};
+bool GetLinearEqn(Point a, Point b, LinearEquation& result)
+{
+    if (a.x > b.x)
+        std::swap(a,b);
+
+    if (b.x - a.x == 0)
+        return false;
+    result.m = (b.y - a.y) / (b.x - a.x);
+    result.b = a.y - result.m * a.x;
+
+    return true;
+}
+
+TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchValue)
+{
+    // The idea of this test is somewhat similar to that of TestList_LineFit.
+    // Instead of assuming that our data fits a linear line between our min
+    // and max, we sample around min and max (1 point near each) to get the
+    // local gradient. Once we have that, we calculate a linear derivative of
+    // the line that approximates the endpoints' locations and the tangent
+    // line at each. From there, we propagate up y-intercept points and plug
+    // them into the inverse function of our line
+
+    // get the starting min and max value.
+    size_t minIndex = 0;
+    size_t maxIndex = values.size() - 1;
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+
+    TestResults ret;
+    ret.found = true;
+    ret.guesses = 0;
+
+    // if we've already found the value, we are done
+    if (searchValue < min)
+    {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue == min)
+    {
+        ret.index = minIndex;
+        return ret;
+    }
+    if (searchValue == max)
+    {
+        ret.index = maxIndex;
+        return ret;
+    }
+
+    // Calculate an approximation line
+    // Assume y'' = c1
+    // y' = xc1 + c2
+    // y = x^2/2 * c1 + xc2 + c3
+    // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+    // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+
+    // tan1 = tangent to min, tan2 = tangent to max, prime = y'
+    LinearEquation tan1, tan2;
+    LinearEquation prime;
+    
+    auto updateEquations = [&]() -> bool
+    {
+        // Update tan1, tan2
+        const size_t offset = (maxIndex - minIndex) / 10; // No good reason for choosing 10. There are probably better values
+        // const size_t offset = 10; // Can also try an absolute offset 
+        if (offset == 0 || offset > (maxIndex - minIndex))
+            return false;
+
+        if (!GetLinearEqn({minIndex, values[minIndex]}, {minIndex + offset, values[minIndex + offset]}, tan1))
+            return false;
+
+        if (!GetLinearEqn({maxIndex, values[maxIndex]}, {maxIndex - offset, values[maxIndex - offset]}, tan2))
+            return false;
+
+        // Update y'
+        // prime.m = c1
+        // prime.b = c2
+        if (!GetLinearEqn({float(minIndex), tan1.m}, {float(maxIndex), tan2.m}, prime))
+            return false;
+
+        return true;
+    };
+
+    auto getGuess = [&](size_t y, size_t& x) -> bool
+    {
+        // Solve for c3 using min
+        const float c3 = values[minIndex] - minIndex * minIndex / 2.0f * prime.m - minIndex * prime.b;
+
+        // Solve for x.
+        // y = x^2/2 * c1 + xc2 + c3
+        // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+        // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+        const float c1 = prime.m;
+        const float c2 = prime.b;
+
+        if ( c2 * c2 - 2 * c1 * (c3 - y) < 0.0f )
+        {
+            return false;
+        }
+
+        if ( c1 == 0.0f )
+        {
+            return false;
+        }
+
+        const float x1f = (-c2 + std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+        const float x2f = (-c2 - std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+
+        const size_t x1 = size_t(x1f + 0.5f);
+        const size_t x2 = size_t(x2f + 0.5f);
+
+        const bool valid1 = x1 > minIndex && x1 < maxIndex;
+        const bool valid2 = x2 > minIndex && x2 < maxIndex;
+        if (!valid1 && !valid2)
+        {
+            return false;
+        }
+        else if(valid1 && !valid2)
+        {
+            x = x1;
+            return true;
+        }
+        else if(!valid1 && valid2)
+        {
+            x = x2;
+            return true;
+        }
+
+        // Both x1 and x2 are valid and in range
+        // If we're concave up, choose the greater, concave down the lesser
+        // This works because we know y' is positive
+        if (c1 > 0)
+        {
+            x = std::max(x1, x2);
+            return true;
+        }
+        else
+        {
+            x = std::min(x1, x2);
+            return true;
+        }
+    };
+
+    bool validEquations = updateEquations();
+
+    while (1)
+    {
+        // make a guess based on our line fit
+        ret.guesses++;
+        size_t guessIndex;
+        if ( !validEquations || !getGuess(searchValue, guessIndex) )
+        {
+            // Fall back to binary search
+            guessIndex = (minIndex + maxIndex) / 2;
+        }
+
+        guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
+        size_t guess = values[guessIndex];
+
+        // if we found it, return success
+        if (guess == searchValue)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+
+        // if we were too low, this is our new minimum
+        if (guess < searchValue)
+        {
+            minIndex = guessIndex;
+            min = guess;
+        }
+        // else we were too high, this is our new maximum
+        else
+        {
+            maxIndex = guessIndex;
+            max = guess;
+        }
+
+        // if we run out of places to look, we didn't find it
+        if (minIndex + 1 >= maxIndex)
+        {
+            ret.index = minIndex;
+            ret.found = false;
+            return ret;
+        }
+
+        validEquations = updateEquations();
+    }
+
+    return ret;
+}
+
 // ------------------------ MAIN ------------------------
 
 void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
@@ -478,6 +691,7 @@ int main(int argc, char** argv)
         {"Line Fit Blind", TestList_LineFitBlind},
         {"Binary Search", TestList_BinarySearch},
         {"Hybrid", TestList_HybridSearch},
+        {"Gradient", TestList_Gradient},
     };
 
 #if MAKE_CSVS()
