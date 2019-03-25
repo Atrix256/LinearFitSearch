@@ -141,6 +141,21 @@ void MakeList_Log(std::vector<size_t>& values, size_t count)
     std::sort(values.begin(), values.end());
 }
 
+void MakeList_Normal(std::vector<size_t>& values, size_t count)
+{
+    std::normal_distribution<> dist{c_maxValue / 2.0f, c_maxValue / 8.0f};
+
+    static std::random_device rd;
+    static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+    static std::mt19937 rng(fullSeed);
+
+    values.resize(count);
+    for (size_t& v : values)
+        v = size_t(Clamp(0.0, double(c_maxValue), dist(rng)));
+
+    std::sort(values.begin(), values.end());
+}
+
 // ------------------------ TEST LIST FUNCTIONS ------------------------
 
 TestResults TestList_LinearSearch(const std::vector<size_t>& values, size_t searchValue)
@@ -682,6 +697,7 @@ int main(int argc, char** argv)
         {"Quadratic", MakeList_Quadratic},
         {"Cubic", MakeList_Cubic},
         {"Log", MakeList_Log},
+        {"Normal", MakeList_Normal},
     };
 
     TestListInfo TestFns[] =

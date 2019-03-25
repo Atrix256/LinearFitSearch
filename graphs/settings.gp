@@ -12,6 +12,7 @@ Quadratic = "lt rgbcolor '#7570b3'"
 Cubic = "lt rgbcolor '#e7298a'"
 Log = "lt rgbcolor '#66a61e'"
 LinearOutlier = "lt rgbcolor '#e6ab02'"
+Normal = "lt rgbcolor '#2b4e77'"
 
 
 FnLinear = "lt rgbcolor '#1b9e77'"
