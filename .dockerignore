@@ -1,0 +1,7 @@
+Dockerfile
+build/
+graphs/intermediates/
+graphs/output/
+graphs/*.csv
+graphs/*.db
+

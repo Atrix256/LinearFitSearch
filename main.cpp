@@ -1,4 +1,6 @@
 #include "stdio.h"
+#include <algorithm>
+#include <fstream>
 #include <vector>
 #include <random>
 #include <thread>
@@ -6,13 +8,16 @@
 #include <string>
 #include <chrono>
 
-static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
-static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
-static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
-static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
-
 #define VERIFY_RESULT() 1 // verifies that the search functions got the right answer. prints out a message if they didn't.
 #define MAKE_CSVS() 1 // the main test
+
+static const size_t c_maxValue = 2000;           // the sorted arrays will have values between 0 and this number in them (inclusive)
+static const size_t c_maxValueIncrement = 1;      // how much to increase our max value by with each step
+static const size_t c_maxNumValues = 1000;       // the graphs will graph between 1 and this many values in a sorted array
+static const size_t c_perfTestNumSearches = 100000; // how many searches are going to be done per list type, to come up with timing for a search type.
+#if MAKE_CSVS()
+static const size_t c_numRunsPerTest = 100;      // how many times does it do the same test to gather min, max, average?
+#endif
 
 struct TestResults
 {
@@ -60,7 +65,7 @@ void MakeList_Random(std::vector<size_t>& values, size_t count)
 {
     std::uniform_int_distribution<size_t> dist(0, c_maxValue);
 
-    static std::random_device rd("dev/random");
+    static std::random_device rd;
     static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
     static std::mt19937 rng(fullSeed);
 
@@ -128,10 +133,25 @@ void MakeList_Log(std::vector<size_t>& values, size_t count)
     for (size_t index = 0; index < count; ++index)
     {
         float x = float(index + 1);
-        float y = log(x+1) / maxValue;
+        float y = log1p(x) / maxValue;
         y *= c_maxValue;
         values[index] = size_t(y);
     }
+
+    std::sort(values.begin(), values.end());
+}
+
+void MakeList_Normal(std::vector<size_t>& values, size_t count)
+{
+    std::normal_distribution<> dist{c_maxValue / 2.0f, c_maxValue / 8.0f};
+
+    static std::random_device rd;
+    static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
+    static std::mt19937 rng(fullSeed);
+
+    values.resize(count);
+    for (size_t& v : values)
+        v = size_t(Clamp(0.0, double(c_maxValue), dist(rng)));
 
     std::sort(values.begin(), values.end());
 }
@@ -419,6 +439,219 @@ TestResults TestList_LineFitBlind(const std::vector<size_t>& values, size_t sear
     return ret;
 }
 
+struct Point
+{
+    Point(float xin, float yin) : x(xin), y(yin) {}
+    Point(size_t xin, size_t yin) : x(float(xin)), y(float(yin)) {}
+    float x;
+    float y;
+};
+struct LinearEquation
+{
+    float m;
+    float b;
+};
+bool GetLinearEqn(Point a, Point b, LinearEquation& result)
+{
+    if (a.x > b.x)
+        std::swap(a,b);
+
+    if (b.x - a.x == 0)
+        return false;
+    result.m = (b.y - a.y) / (b.x - a.x);
+    result.b = a.y - result.m * a.x;
+
+    return true;
+}
+
+TestResults TestList_Gradient(const std::vector<size_t>& values, size_t searchValue)
+{
+    // The idea of this test is somewhat similar to that of TestList_LineFit.
+    // Instead of assuming that our data fits a linear line between our min
+    // and max, we sample around min and max (1 point near each) to get the
+    // local gradient. Once we have that, we calculate a linear derivative of
+    // the line that approximates the endpoints' locations and the tangent
+    // line at each. From there, we propagate up y-intercept points and plug
+    // them into the inverse function of our line
+
+    // get the starting min and max value.
+    size_t minIndex = 0;
+    size_t maxIndex = values.size() - 1;
+    size_t min = values[minIndex];
+    size_t max = values[maxIndex];
+
+    TestResults ret;
+    ret.found = true;
+    ret.guesses = 0;
+
+    // if we've already found the value, we are done
+    if (searchValue < min)
+    {
+        ret.index = minIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue > max)
+    {
+        ret.index = maxIndex;
+        ret.found = false;
+        return ret;
+    }
+    if (searchValue == min)
+    {
+        ret.index = minIndex;
+        return ret;
+    }
+    if (searchValue == max)
+    {
+        ret.index = maxIndex;
+        return ret;
+    }
+
+    // Calculate an approximation line
+    // Assume y'' = c1
+    // y' = xc1 + c2
+    // y = x^2/2 * c1 + xc2 + c3
+    // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+    // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+
+    // tan1 = tangent to min, tan2 = tangent to max, prime = y'
+    LinearEquation tan1, tan2;
+    LinearEquation prime;
+    
+    auto updateEquations = [&]() -> bool
+    {
+        // Update tan1, tan2
+        const size_t offset = (maxIndex - minIndex) / 10; // No good reason for choosing 10. There are probably better values
+        // const size_t offset = 10; // Can also try an absolute offset 
+        if (offset == 0 || offset > (maxIndex - minIndex))
+            return false;
+
+        if (!GetLinearEqn({minIndex, values[minIndex]}, {minIndex + offset, values[minIndex + offset]}, tan1))
+            return false;
+
+        if (!GetLinearEqn({maxIndex, values[maxIndex]}, {maxIndex - offset, values[maxIndex - offset]}, tan2))
+            return false;
+
+        // Update y'
+        // prime.m = c1
+        // prime.b = c2
+        if (!GetLinearEqn({float(minIndex), tan1.m}, {float(maxIndex), tan2.m}, prime))
+            return false;
+
+        return true;
+    };
+
+    auto getGuess = [&](size_t y, size_t& x) -> bool
+    {
+        // Solve for c3 using min
+        const float c3 = values[minIndex] - minIndex * minIndex / 2.0f * prime.m - minIndex * prime.b;
+
+        // Solve for x.
+        // y = x^2/2 * c1 + xc2 + c3
+        // 0 = x^2/2 * c1 + xc2 + (c3 - y)
+        // x = (-c2 +- sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1
+        const float c1 = prime.m;
+        const float c2 = prime.b;
+
+        if ( c2 * c2 - 2 * c1 * (c3 - y) < 0.0f )
+        {
+            return false;
+        }
+
+        if ( c1 == 0.0f )
+        {
+            return false;
+        }
+
+        const float x1f = (-c2 + std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+        const float x2f = (-c2 - std::sqrt(c2 * c2 - 2 * c1 * (c3 - y))) / c1;
+
+        const size_t x1 = size_t(x1f + 0.5f);
+        const size_t x2 = size_t(x2f + 0.5f);
+
+        const bool valid1 = x1 > minIndex && x1 < maxIndex;
+        const bool valid2 = x2 > minIndex && x2 < maxIndex;
+        if (!valid1 && !valid2)
+        {
+            return false;
+        }
+        else if(valid1 && !valid2)
+        {
+            x = x1;
+            return true;
+        }
+        else if(!valid1 && valid2)
+        {
+            x = x2;
+            return true;
+        }
+
+        // Both x1 and x2 are valid and in range
+        // If we're concave up, choose the greater, concave down the lesser
+        // This works because we know y' is positive
+        if (c1 > 0)
+        {
+            x = std::max(x1, x2);
+            return true;
+        }
+        else
+        {
+            x = std::min(x1, x2);
+            return true;
+        }
+    };
+
+    bool validEquations = updateEquations();
+
+    while (1)
+    {
+        // make a guess based on our line fit
+        ret.guesses++;
+        size_t guessIndex;
+        if ( !validEquations || !getGuess(searchValue, guessIndex) )
+        {
+            // Fall back to binary search
+            guessIndex = (minIndex + maxIndex) / 2;
+        }
+
+        guessIndex = Clamp(minIndex + 1, maxIndex - 1, guessIndex);
+        size_t guess = values[guessIndex];
+
+        // if we found it, return success
+        if (guess == searchValue)
+        {
+            ret.index = guessIndex;
+            return ret;
+        }
+
+        // if we were too low, this is our new minimum
+        if (guess < searchValue)
+        {
+            minIndex = guessIndex;
+            min = guess;
+        }
+        // else we were too high, this is our new maximum
+        else
+        {
+            maxIndex = guessIndex;
+            max = guess;
+        }
+
+        // if we run out of places to look, we didn't find it
+        if (minIndex + 1 >= maxIndex)
+        {
+            ret.index = minIndex;
+            ret.found = false;
+            return ret;
+        }
+
+        validEquations = updateEquations();
+    }
+
+    return ret;
+}
+
 // ------------------------ MAIN ------------------------
 
 void VerifyResults(const std::vector<size_t>& values, size_t searchValue, const TestResults& result, const char* list, const char* test)
@@ -464,6 +697,7 @@ int main(int argc, char** argv)
         {"Quadratic", MakeList_Quadratic},
         {"Cubic", MakeList_Cubic},
         {"Log", MakeList_Log},
+        {"Normal", MakeList_Normal},
     };
 
     TestListInfo TestFns[] =
@@ -473,6 +707,7 @@ int main(int argc, char** argv)
         {"Line Fit Blind", TestList_LineFitBlind},
         {"Binary Search", TestList_BinarySearch},
         {"Hybrid", TestList_HybridSearch},
+        {"Gradient", TestList_Gradient},
     };
 
 #if MAKE_CSVS()
@@ -481,8 +716,24 @@ int main(int argc, char** argv)
     std::vector<std::thread> threads;
     threads.resize(numThreads);
 
-    typedef std::vector<std::string> TRow;
-    typedef std::vector<TRow> TSheet;
+    // To store off results
+    std::vector<std::string> columns =
+    { "DataDist", "SearchFn", "Samples", "Min", "Max", "Avg", "Single" };
+    struct ResultRow {
+        size_t dataDistIdx;
+        size_t searchFnIdx;
+        size_t samples;
+        size_t minimum;
+        size_t maximum;
+        float avg;
+        size_t single;
+    };
+
+    // Every group is owned by 1 thread.
+    std::vector<ResultRow> results[countof(MakeFns)];
+
+    // We store off the actual values for each distribution
+    std::vector<size_t> samples[countof(MakeFns)];
 
     // for each numer sequence. Done multithreadedly
     std::atomic<size_t> nextRow(0);
@@ -496,38 +747,16 @@ int main(int argc, char** argv)
                 {
                     printf("Starting %s\n", MakeFns[makeIndex].name);
 
-                    static std::random_device rd("dev/random");
+                    static std::random_device rd;
                     static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
                     static std::mt19937 rng(fullSeed);
-
-                    // the data to write to the csv file. a row per sample count plus one more for titles
-                    TSheet csv;
-                    csv.resize(c_maxNumValues + 1);
-
-                    // make a column for the sample counts
-                    char buffer[256];
-                    csv[0].push_back("Sample Count");
-                    for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
-                    {
-                        sprintf_s(buffer, "%zu", numValues);
-                        csv[numValues].push_back(buffer);
-                    }
 
                     // for each test
                     std::vector<size_t> values;
                     for (size_t testIndex = 0; testIndex < countof(TestFns); ++testIndex)
                     {
-                        sprintf_s(buffer, "%s Min", TestFns[testIndex].name);
-                        csv[0].push_back(buffer);
-                        sprintf_s(buffer, "%s Max", TestFns[testIndex].name);
-                        csv[0].push_back(buffer);
-                        sprintf_s(buffer, "%s Avg", TestFns[testIndex].name);
-                        csv[0].push_back(buffer);
-                        sprintf_s(buffer, "%s Single", TestFns[testIndex].name);
-                        csv[0].push_back(buffer);
-
                         // for each result
-                        for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
+                        for (size_t numValues = 1; numValues <= c_maxNumValues; numValues += c_maxValueIncrement)
                         {
                             size_t guessMin = ~size_t(0);
                             size_t guessMax = 0;
@@ -551,41 +780,19 @@ int main(int argc, char** argv)
                                 guessSingle = result.guesses;
                             }
 
-                            sprintf_s(buffer, "%zu", guessMin);
-                            csv[numValues].push_back(buffer);
-
-                            sprintf_s(buffer, "%zu", guessMax);
-                            csv[numValues].push_back(buffer);
-
-                            sprintf_s(buffer, "%f", guessAverage);
-                            csv[numValues].push_back(buffer);
-
-                            sprintf_s(buffer, "%zu", guessSingle);
-                            csv[numValues].push_back(buffer);
+                            ResultRow result;
+                            result.samples = numValues;
+                            result.dataDistIdx = makeIndex;
+                            result.searchFnIdx = testIndex;
+                            result.minimum = guessMin;
+                            result.maximum = guessMax;
+                            result.avg = guessAverage;
+                            result.single = guessSingle;
+                            results[makeIndex].emplace_back(std::move(result));
                         }
                     }
 
-                    // make a column for the sampling sequence itself
-                    csv[0].push_back("Sequence");
-                    for (size_t numValues = 1; numValues <= c_maxNumValues; ++numValues)
-                    {
-                        sprintf_s(buffer, "%zu", values[numValues-1]);
-                        csv[numValues].push_back(buffer);
-                    }
-
-                    char fileName[256];
-                    sprintf_s(fileName, "out/%s.csv", MakeFns[makeIndex].name);
-                    FILE* file = nullptr;
-                    fopen_s(&file, fileName, "w+b");
-
-                    for (const TRow& row : csv)
-                    {
-                        for (const std::string& cell : row)
-                            fprintf(file, "\"%s\",", cell.c_str());
-                        fprintf(file, "\n");
-                    }
-
-                    fclose(file);
+                    samples[makeIndex] = std::move(values);
 
                     printf("Done with %s\n", MakeFns[makeIndex].name);
 
@@ -598,11 +805,62 @@ int main(int argc, char** argv)
     for (std::thread& t : threads)
         t.join();
 
+    // Write output to files
+    printf("Writing result output\n");
+
+    {
+        std::ofstream out("results.csv", std::ios::trunc | std::ios::out);
+#if WRITE_CSV_HEADERS
+        // Header
+        for (size_t i = 0; i < columns.size(); ++i)
+        {
+            out << '"' << columns[i] << '"';
+            if (i != columns.size() - 1)
+                out << ',';
+        }
+        out << std::endl;
+#endif
+
+        // Values
+        for (const std::vector<ResultRow>& group : results)
+        {
+            for (const ResultRow& row : group)
+            {
+                out << '"' << MakeFns[row.dataDistIdx].name << "\","
+                    << '"' << TestFns[row.searchFnIdx].name << "\","
+                    << row.samples << ','
+                    << row.minimum << ','
+                    << row.maximum << ','
+                    << row.avg << ','
+                    << row.single << std::endl;
+            }
+        }
+    }
+
+    // Write samples to files
+    printf("Writing samples\n");
+    {
+        std::ofstream out("samples.csv", std::ios::trunc | std::ios::out);
+#if WRITE_CSV_HEADERS
+        out << "\"Dist\",\"Index\",\"Value\"" << std::endl;
+#endif
+
+        for (size_t i = 0; i < countof(samples); ++i)
+        {
+            const std::vector<size_t>& sample = samples[i];
+            for (size_t j = 0; j < sample.size(); ++j)
+            {
+                out << '"' << MakeFns[i].name << "\","
+                    << j << ',' << sample[j] << std::endl;
+            }
+        }
+    }
+
 #endif // MAKE_CSVS()
 
     // Do perf tests
     {
-        static std::random_device rd("dev/random");
+        static std::random_device rd;
         static std::seed_seq fullSeed{ rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd() };
         static std::mt19937 rng(fullSeed);
 
@@ -652,7 +910,9 @@ int main(int argc, char** argv)
         }
     }
 
+#ifdef _WIN32
     system("pause");
+#endif
 
     return 0;
 }
